@@ -1,0 +1,80 @@
+def solve_p_median(df, p):
+    # 수요지와 공급지(시설 위치)를 구분하여 추출
+    origins = df['stu_locations'].unique()
+    facilities = df['fac_locations'].unique()
+
+    # P-median 문제 정의
+    prob = pulp.LpProblem('p_median', pulp.LpMinimize)
+
+    # 변수 정의
+    x = pulp.LpVariable.dicts('x', (origins, facilities), 0, 1, pulp.LpBinary)
+    y = pulp.LpVariable.dicts('y', facilities, 0, 1, pulp.LpBinary)
+
+    # 목적 함수 정의 (수요지와 공급지 간의 거리 최소화)
+    prob += pulp.lpSum(df[(df['stu_locations'] == origin) & (df['fac_locations'] == facility)]['distance'].values[0] * x[origin][facility]
+                        for origin in origins for facility in facilities)
+
+    # 제약 조건 1: 각 수요지는 반드시 하나의 공급지에 할당되어야 함
+    for origin in origins:
+        prob += pulp.lpSum(x[origin][facility] for facility in facilities) == 1
+
+    # 제약 조건 2: 수요지가 특정 공급지에 할당되려면 그 공급지에 시설이 설치되어야 함
+    for origin in origins:
+        for facility in facilities:
+            prob += x[origin][facility] <= y[facility]
+
+    # 제약 조건 3: p개의 시설만 설치되어야 함
+    prob += pulp.lpSum(y[facility] for facility in facilities) == p
+
+    # 문제 풀기
+    prob.solve()
+
+    # 선택된 시설 위치 반환 (예: "(lat, lon)" 형식으로 되어 있다고 가정)
+    selected_facilities = [facility for facility in facilities if y[facility].value() == 1]
+
+    # 선택된 시설에 대응되는 수요 지점의 거리 총합 계산
+    total_distance = pulp.value(prob.objective)
+
+    return selected_facilities, total_distance
+
+# 단지명 매핑 함수 (lat, lon을 기반으로 supply_data에서 단지명을 찾음)
+def get_facility_name(facility_locations, supply_data):
+    facility_names = []
+    for facility in facility_locations:
+        match = supply_data[(supply_data['lat'] == facility[0]) & (supply_data['lon'] == facility[1])]
+        if not match.empty:
+            facility_names.append(match.iloc[0]['단지명'])  # 단지명 열이 존재한다고 가정
+        else:
+            facility_names.append("Unknown")
+    return facility_names
+
+# P-median에서 선택된 시설을 lat/lon으로 분리하는 과정 추가
+def pmedian_to_lat_lon(selected_facilities):
+    # lat와 lon 값을 분해하여 각각 새로운 리스트 생성
+    lat = [float(coord.split(',')[0].strip('() ')) for coord in selected_facilities]  # 좌표 문자열에서 위도 추출
+    lon = [float(coord.split(',')[1].strip('() ')) for coord in selected_facilities]  # 좌표 문자열에서 경도 추출
+
+    # DataFrame으로 변환
+    pmedian_df = pd.DataFrame({'lat': lat, 'lon': lon})
+    return pmedian_df
+
+# p값에 따라 시설 위치와 총 거리 계산
+def p_median_analysis(df, supply_data, p_values):
+    results = []
+    for p in p_values:
+        selected_facilities, total_distance = solve_p_median(df, p)
+
+        # lat/lon 데이터프레임 생성
+        pmedian_df = pmedian_to_lat_lon(selected_facilities)
+
+        # 단지명 매핑
+        facility_names = get_facility_name(pmedian_df[['lat', 'lon']].values, supply_data)
+
+        results.append({
+            'p_value': p,
+            'selected_facilities': selected_facilities,
+            'facility_names': facility_names,
+            'total_distance': total_distance
+        })
+
+    return pd.DataFrame(results)
